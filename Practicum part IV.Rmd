@@ -1,0 +1,168 @@
+---
+title: "STAT 601- Practicum Part IV"
+author: "Amin Shirazi"
+date: "May 1, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(xtable)
+```
+
+
+```{r, echo=FALSE}
+#Reading the data set from the file
+quaddat<-read.table(file = "./Data/quaddat.txt", 
+                    header = TRUE  ) %>% data.frame( ) 
+
+# Converting the variables into proportions
+quaddat<-quaddat %>% mutate(severity= severity/100, 
+                            incidence= incidence/100, 
+                            doy= doy- min(doy)+1)
+```
+
+
+```{r, fig01, fig.height = 4, fig.width =6, echo=FALSE,  fig.align = "center", fig.cap=" Severity vs. Incidence for Quadrat level Observation"}
+
+quaddat %>% ggplot(aes(x = incidence, y= severity)) + geom_point()
+
+quaddat %>% ggplot(aes(x = severity, y= incidence)) + geom_point()
+
+```
+
+
+
+```{r ,echo=FALSE, "the negpotential model and the param"}
+
+data<-quaddat %>% select(severity, incidence)
+
+library(cubature)
+negpotential<- function(par, data
+              #par= c("phi_y", "mu_y", "phi_z", "mu_z", "eta") 
+                        ){
+  y<-data[ , "severity"]
+  z<-data[ , "incidence"]
+  if(all(par > 0)){
+    if(all(par[2]<1 & par[4]<1)){
+    
+  phi_y<- par[1]; mu_y<-par[2]
+  phi_z<-par[3]; mu_z<- par[4] 
+  eta<-par[5]
+  
+  
+  alpha_y1 <- phi_y * mu_y
+  alpha_y2 <- phi_y * (1 - mu_y)
+  alpha_z1 <- phi_z * mu_z
+  alpha_z2 <- phi_z * (1 - mu_z)
+  
+  #derivative of gamma function for tau
+  tau_z1 <- digamma(alpha_z1) - digamma(alpha_z1 + alpha_z2)
+  tau_z2 <- digamma(alpha_z2) - digamma(alpha_z1 + alpha_z2)
+  tau_y1 <- digamma(alpha_y1) - digamma(alpha_y1 + alpha_y2)
+  tau_y2 <- digamma(alpha_y2) - digamma(alpha_y1 + alpha_y2)
+  
+
+  
+  Q<- function(y, z){
+    
+    (alpha_y1* log(y))+ (eta*tau_z2*log(y)) + (alpha_y2*log(1-y))+ (eta*tau_z1*log(1-y))+
+      (alpha_z1*log(z))+ (eta*tau_y2*log(z))+ (alpha_z2*log(1-z))+ (eta*tau_y1*log(1-z))-
+      (eta*log(z)*log(1-y))- (eta* log(1-z)*log(y))-
+      log(z)- log(1-z)- log(y)- log(1-y)
+    
+    
+  }
+  
+  
+  if( eta >= min(-alpha_y1/tau_z2, -alpha_y2/tau_z1, -alpha_z1/tau_y2, -alpha_z2/tau_y1) ){ Inf }
+  
+  den <- 1
+  try(den <- pracma::integral2(function(y, z) {exp(Q(y, z))},
+                               0, 1, 0, 1, reltol = 1e-15)$Q, FALSE)
+  num <- exp(Q(y, z))
+  
+  return(-sum(log(num / den)))
+  
+
+  # 
+  # num<- exp(Q(y, z))
+  # 
+  # 
+  # out<- adaptIntegrate(function(y, z) { exp(Q(y, z)) },
+  #                  lowerLimit = c(0, 0),
+  #                  upperLimit = c(1, 1))$integral
+  #               
+  # 
+  # return(- sum(log(num / out)))
+    }
+    else{ NA }
+  }
+  
+  else{ NA }
+}
+
+optim(par = c(10,0.5,10,0.5,5), fn = negpotential, hessian = TRUE, data= data, method = "SANN")
+
+
+
+```
+
+
+
+```{r}
+# conditional densities for composit likelihood
+# composite Besag's pseudo likelihood
+comp_loglike<- function(par, data
+                        #par= c("phi_y", "mu_y", "phi_z", "mu_z", "eta") 
+){
+  y<-data[ , "severity"]
+  z<-data[ , "incidence"]
+  if(all(par > 0)){
+    if(all(par[2]<1 & par[4]<1)){
+      
+      phi_y<- par[1]; mu_y<-par[2]
+      phi_z<-par[3]; mu_z<- par[4] 
+      eta<-par[5]
+      
+
+      
+      alpha_y1 <- phi_y * mu_y
+      alpha_y2 <- phi_y * (1 - mu_y)
+      alpha_z1 <- phi_z * mu_z
+      alpha_z2 <- phi_z * (1 - mu_z)
+      
+      #derivative of gamma function for tau
+      tau_z1 <- digamma(alpha_z1) - digamma(alpha_z1 + alpha_z2)
+      tau_z2 <- digamma(alpha_z2) - digamma(alpha_z1 + alpha_z2)
+      tau_y1 <- digamma(alpha_y1) - digamma(alpha_y1 + alpha_y2)
+      tau_y2 <- digamma(alpha_y2) - digamma(alpha_y1 + alpha_y2)
+      
+      A_y1 <- alpha_y1 - (eta * (log(1 - z) - tau_z2))
+      A_y2 <- alpha_y2 - (eta * (log(z) - tau_z1))
+      
+      A_z1 <- alpha_z1 - (eta * (log(1 - y) - tau_y2))
+      A_z2 <- alpha_z2 - (eta * (log(y) - tau_y1))
+
+      
+      b_y <- log(gamma(A_z1)) + log(gamma(A_z2)) - log(gamma(A_z1 + A_z2))
+      c_y <- -log(y) - log(1-y)
+      b_z <- log(gamma(A_y1)) + log(gamma(A_y2)) - log(gamma(A_y1 + A_y2))
+      c_z <- -log(z) - log(1-z) 
+      
+      f_yz <- exp((A_y1 * log(y)) + (A_y2 * log(1 - y)) - b_z + c_y)
+      f_zy <- exp((A_z1 * log(z)) +(A_z2 * log(1-z)) -b_y + c_z )
+     # if( eta >= min(-alpha_y1/tau_z2, -alpha_y2/tau_z1, -alpha_z1/tau_y2, -alpha_z2/tau_y1) ){ Inf }
+
+      out<- log(f_yz)+ log(f_zy)
+      
+      return(- sum(out))
+    }
+    else{ Inf }
+  }
+  else{ Inf }
+}
+
+```
+
